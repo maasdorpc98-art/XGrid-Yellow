@@ -48,6 +48,16 @@ jobs:
             git push || echo "Could not persist wrapper JAR; run the restore script locally if needed."
           fi
 
+      - name: Generate compile-only preserved-browser application stub
+        run: |
+          mkdir -p /tmp/blue-stub/com/mmbox/xbrowser app/libs
+          cat > /tmp/blue-stub/com/mmbox/xbrowser/Browser.java <<'JAVA'
+          package com.mmbox.xbrowser;
+          public class Browser extends android.app.Application {}
+          JAVA
+          javac -cp "${ANDROID_HOME}/platforms/android-35/android.jar" -d /tmp/blue-stub/classes /tmp/blue-stub/com/mmbox/xbrowser/Browser.java
+          jar cf app/libs/xbrowser-compile-only.jar -C /tmp/blue-stub/classes .
+
       - name: Assemble debug APK
         run: |
           chmod +x gradlew

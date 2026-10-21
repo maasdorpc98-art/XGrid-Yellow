@@ -31,6 +31,8 @@ android {
 }
 
 dependencies {
+    // Compile-only API from the preserved compiled XBrowser base; never package the stub.
+    compileOnly(files("libs/xbrowser-compile-only.jar"))
     implementation("com.google.mediapipe:tasks-vision:0.10.32")
     implementation("org.opencv:opencv:4.12.0")
 }
