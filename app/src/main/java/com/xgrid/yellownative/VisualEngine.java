@@ -42,7 +42,7 @@ public final class VisualEngine implements AutoCloseable {
     public String initError = "";
 
     public static final class Signature {
-        public double[] geometry = new double[216];
+        public double[] geometry = new double[232];
         public double[] motion = new double[8];
         public boolean motionValid;
         public boolean gifVerified;
@@ -67,8 +67,8 @@ public final class VisualEngine implements AutoCloseable {
             if (obj == null || !"native-geometry-pose-flow-v1".equals(obj.optString("method"))) return null;
             Signature s = new Signature();
             JSONArray g=obj.optJSONArray("geometry"), m=obj.optJSONArray("motion");
-            if(g==null || m==null || g.length()!=216 || m.length()!=8) return null;
-            for(int i=0;i<216;i++) s.geometry[i]=g.optDouble(i);
+            if(g==null || m==null || g.length()!=232 || m.length()!=8) return null;
+            for(int i=0;i<232;i++) s.geometry[i]=g.optDouble(i);
             for(int i=0;i<8;i++) s.motion[i]=m.optDouble(i);
             s.motionValid=obj.optBoolean("motionValid");
             s.gifVerified=obj.optBoolean("gifVerified");
@@ -185,7 +185,7 @@ public final class VisualEngine implements AutoCloseable {
     }
 
     private double[] geometry(Bitmap b) {
-        double[] f=new double[216];
+        double[] f=new double[232];
         int[] pix=new int[SIZE*SIZE]; b.getPixels(pix,0,SIZE,0,0,SIZE,SIZE);
         for(int y=0;y<SIZE;y++){
             for(int x=0;x<SIZE;x++){
@@ -218,8 +218,8 @@ public final class VisualEngine implements AutoCloseable {
         int[] idx={11,12,23,24,25,26,27,28};
         for(int i=0;i<idx.length;i++) if(p.size()>idx[i]){
             NormalizedLandmark l=p.get(idx[i]);
-            features[200+i*2]+=Math.max(0,Math.min(1,l.x()))*factor;
-            features[200+i*2+1]+=Math.max(0,Math.min(1,l.y()))*factor;
+            features[216+i*2]+=Math.max(0,Math.min(1,l.x()))*factor;
+            features[216+i*2+1]+=Math.max(0,Math.min(1,l.y()))*factor;
         }
     }
 
@@ -263,7 +263,7 @@ public final class VisualEngine implements AutoCloseable {
         }
         // Pose features should only influence geometry when both have poses.
         if(a.poses>0 && b.poses>0){
-            for(int i=200;i<216;i++){double x=a.geometry[i]-b.geometry[i]; d+=x*x*.75;}
+            for(int i=216;i<232;i++){double x=a.geometry[i]-b.geometry[i]; d+=x*x*.75;}
         }
         double geom=Math.exp(-3*Math.sqrt(d/200));
         boolean motion=a.motionValid && b.motionValid;
