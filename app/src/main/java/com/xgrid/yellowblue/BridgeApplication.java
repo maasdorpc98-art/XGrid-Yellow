@@ -43,6 +43,7 @@ public final class BridgeApplication extends Browser implements Application.Acti
     private volatile GifStore store;
     private volatile String error = "";
     private volatile int finished, failed, rejected, attachedViews;
+    private volatile int originalGifSuccess, previewGeometrySuccess, badUrls;
     private volatile long totalAnalysisMs;
     private Activity current;
     private long lastSweep;
@@ -109,68 +110,117 @@ public final class BridgeApplication extends Browser implements Application.Acti
                 o.put("rejected",rejected);
                 o.put("inflight",inflight.get());
                 o.put("analysisMs",totalAnalysisMs);
+                o.put("originalGifSuccess",originalGifSuccess);
+                o.put("previewGeometrySuccess",previewGeometrySuccess);
+                o.put("badUrls",badUrls);
                 o.put("error",error+(v!=null?v.initError:""));
             }catch(Exception ignored){}
             return o.toString();
         }
 
-        /** Asynchronous; returns false immediately if queue/URL is unsuitable. */
-        @JavascriptInterface public boolean analyzeGif(String url, String token) {
-            if(url==null || token==null || token.length()>96 || url.length()>1600)return false;
-            if(!url.startsWith("https://")){rejected++;return false;}
-            try{
-                URI uri = new URI(url);
-                String hostName=uri.getHost();
-                if(hostName==null || hostName.length()<4 || hostName.equals("localhost") ||
-                   hostName.endsWith(".local") || hostName.endsWith(".internal") ||
-                   hostName.matches("(?i)^(?:10|127|192\\.168)\\..*")) {
-                   rejected++;return false;
-                }
-            }catch(Exception err){rejected++;return false;}
+        /**
+         * GIF source is preferred for an anchor. Search result previews can be
+         * analyzed as geometry-only when original GIFs are inaccessible.
+         */
+        @JavascriptInterface public boolean analyzeVisual(String original, String preview, String token) {
+            if(token==null||token.length()<2||token.length()>96)return false;
+            final String gifUrl=isSafePublicUrl(original)?original:"";
+            final String previewUrl=isSafePublicUrl(preview)?preview:"";
+            if(gifUrl.isEmpty() && previewUrl.isEmpty()){badUrls++;rejected++;return false;}
             if(inflight.incrementAndGet()>3){inflight.decrementAndGet();return false;}
             main.post(() -> {
-                String page = host.getUrl();
-                if(page==null || !page.matches("(?i)^https://(?:www\\.)?google\\.[^/]+/(?:search|imgres).*")){
+                String page=host.getUrl();
+                if(page==null || !page.matches("(?i)^https://(?:www\\\\.)?google\\\\.[^/]+/(?:search|imgres).*")){
                     inflight.decrementAndGet();rejected++;
                     return;
                 }
-                jobs.execute(() -> analyze(host,url,token));
+                jobs.execute(()->analyze(host,gifUrl,previewUrl,token));
             });
             return true;
         }
 
-        private void analyze(WebView web, String url, String token) {
+        /** Backwards-compatible native hook for earlier XSearch scripts. */
+        @JavascriptInterface public boolean analyzeGif(String url, String token) {
+            return analyzeVisual(url,url,token);
+        }
+
+        private boolean isSafePublicUrl(String url) {
+            if(url==null || url.length()>1600 || !url.startsWith("https://"))return false;
+            try {
+                URI uri=new URI(url);
+                String hostName=uri.getHost();
+                if(hostName==null || hostName.length()<4 || uri.getUserInfo()!=null)return false;
+                String name=hostName.toLowerCase(java.util.Locale.ROOT);
+                if(name.equals("localhost") || name.endsWith(".localhost") ||
+                    name.endsWith(".local") || name.endsWith(".internal") ||
+                    name.endsWith(".test") || name.equals("metadata.google.internal") ||
+                    name.startsWith("127.") || name.startsWith("10.") ||
+                    name.startsWith("192.168.") || name.startsWith("169.254.") ||
+                    name.equals("::1") || name.startsWith("[") ||
+                    name.matches("^172\\\\.(?:1[6-9]|2[0-9]|3[01])\\\\..*") ||
+                    name.matches("^[0-9.]+$"))return false;
+                int port=uri.getPort(); if(port!=-1 && port!=443)return false;
+                return true;
+            }catch(Exception ignored){return false;}
+        }
+
+        private void analyze(WebView web,String gifUrl,String previewUrl,String token) {
             long start=SystemClock.elapsedRealtime();
             JSONObject output=new JSONObject();
-            try{
+            try {
                 output.put("token",token);
-                output.put("url",url);
+                output.put("url",gifUrl.isEmpty()?previewUrl:gifUrl);
                 VisualEngine local=engine;
-                if(local==null)throw new IllegalStateException("MediaPipe/OpenCV engine starting");
-                VisualEngine.Signature signature=store.remembered(url);
-                if(signature==null || !signature.gifVerified){
-                    byte[] bytes=store.loadGif(url);
-                    synchronized(local){signature=local.analyze(bytes,null);}
-                    if(signature==null || !signature.gifVerified || signature.frames<1)
-                        throw new IllegalStateException("Original GIF frames unavailable");
-                    store.remember(url,signature);
+                if(local==null)throw new IllegalStateException("Native visual engine starting");
+                VisualEngine.Signature signature=null;
+                String method="preview-geometry";
+                String originalError="";
+                if(!gifUrl.isEmpty() && gifUrl.matches("(?i)^https://.*\\\\.gif(?:[?#].*)?$")) {
+                    try {
+                        signature=store.remembered(gifUrl);
+                        if(signature==null || !signature.gifVerified){
+                            byte[] bytes=store.loadGif(gifUrl);
+                            synchronized(local){signature=local.analyze(bytes,null);}
+                            if(signature==null || !signature.gifVerified || signature.frames<1)
+                                throw new IllegalArgumentException("Original GIF not decodable");
+                            store.remember(gifUrl,signature);
+                        }
+                        originalGifSuccess++;
+                        method="original-gif-motion";
+                    } catch(Exception e) {
+                        originalError=e.getClass().getSimpleName();
+                        signature=null;
+                    }
+                }
+                if(signature==null){
+                    Bitmap image=null;
+                    if(!previewUrl.isEmpty())image=store.loadThumbnail(previewUrl);
+                    if(image==null && !gifUrl.isEmpty() && !gifUrl.equals(previewUrl))
+                        image=store.loadThumbnail(gifUrl);
+                    if(image==null)throw new IllegalStateException("Preview unavailable"+(originalError.isEmpty()?"":"; original="+originalError));
+                    synchronized(local){signature=local.analyzeFast(image);}
+                    if(signature.frames<1)throw new IllegalStateException("Preview geometry unavailable");
+                    previewGeometrySuccess++;
                 }
                 output.put("ok",true);
                 output.put("signature",signature.json());
+                output.put("mode",method);
+                output.put("originalError",originalError);
                 finished++;
             }catch(Throwable ex) {
                 failed++;
-                try{output.put("ok",false);output.put("error",ex.getClass().getSimpleName()+": "+ex.getMessage());}
-                catch(Exception ignored){}
-            }finally{
+                try {
+                    output.put("ok",false);
+                    output.put("error",ex.getClass().getSimpleName()+": "+ex.getMessage());
+                }catch(Exception ignored){}
+            }finally {
                 totalAnalysisMs+=SystemClock.elapsedRealtime()-start;
                 inflight.decrementAndGet();
             }
             final String payload=output.toString();
-            main.post(() -> {
-                try{
-                    web.evaluateJavascript("window.dispatchEvent(new CustomEvent('__xgridNativeAnalysis',{detail:"+payload+"}));",null);
-                }catch(Throwable t){error="callback: "+t.getClass().getSimpleName();}
+            main.post(()->{
+                try { web.evaluateJavascript("window.dispatchEvent(new CustomEvent('__xgridNativeAnalysis',{detail:"+payload+"}));",null); }
+                catch(Throwable t){error="callback: "+t.getClass().getSimpleName();}
             });
         }
     }
