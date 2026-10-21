@@ -298,6 +298,7 @@ public final class MainActivity extends Activity {
                         }
                         item.rank=p>0?Math.max(0,positive/p-(n>0?.35*negative/n:0)):-1;
                     }
+                    final int scoredReady=ready;
                     runOnUiThread(()->{
                         List<String> before=new ArrayList<>();
                         for(GifStore.Item i:cards)before.add(i.key);
@@ -307,7 +308,7 @@ public final class MainActivity extends Activity {
                         rankMoves=moves;rankTransactions++;
                         lastFindMs=System.currentTimeMillis()-began;
                         lastOutcome=moves>0?"Reshuffled "+moves+" cards":"Scored; order unchanged";
-                        setStatus("FIND MORE • "+lastOutcome+" • "+ready+" analyzed • "+lastFindMs+"ms");
+                        setStatus("FIND MORE • "+lastOutcome+" • "+scoredReady+" analyzed • "+lastFindMs+"ms");
                         ranking.set(false);adapter.notifyDataSetChanged();updateStats();
                     });
                 }else runOnUiThread(()->{
