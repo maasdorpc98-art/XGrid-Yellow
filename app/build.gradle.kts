@@ -1,3 +1,5 @@
+import java.net.URL
+
 plugins {
     id("com.android.application")
 }
@@ -41,7 +43,7 @@ val ensurePoseModel by tasks.registering {
         if (!f.exists() || f.length() < 1_000_000L) {
             f.parentFile.mkdirs()
             val temp = File(f.parentFile, f.name + ".part")
-            val connection = java.net.URL("https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task").openConnection()
+            val connection = URL("https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task").openConnection()
             connection.connectTimeout = 20000
             connection.readTimeout = 90000
             connection.getInputStream().use { input -> temp.outputStream().use { output -> input.copyTo(output) } }
