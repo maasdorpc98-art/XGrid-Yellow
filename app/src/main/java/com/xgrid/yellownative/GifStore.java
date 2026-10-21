@@ -46,7 +46,7 @@ public final class GifStore {
     }
     private final File disk;
     private final SharedPreferences signatures;
-    private final LruCache<String,Bitmap> thumbnails = new LruCache<String,Bitmap>(48) {
+    private final LruCache<String,Bitmap> thumbnails = new LruCache<String,Bitmap>(48_000) {
         @Override protected int sizeOf(String key,Bitmap value){return Math.max(1,value.getByteCount()/1024);}
     };
     public final ExecutorService workers = Executors.newFixedThreadPool(5);
