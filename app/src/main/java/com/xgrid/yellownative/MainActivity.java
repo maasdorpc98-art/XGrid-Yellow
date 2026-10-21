@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** GIF-only app; Google retrieval is separate from on-device visual ranking. */
-public final class MainActivity extends Activity implements SearchBridge.Listener {
+public final class MainActivity extends Activity {
     private static final int BG=0xff101210, PANEL=0xff1c211c, YELLOW=0xffffd137,
             TEXT=0xfff5f4ed, MUTED=0xffa8b0a3;
     private EditText queryBox;

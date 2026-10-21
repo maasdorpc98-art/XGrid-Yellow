@@ -61,7 +61,7 @@ public final class VisualEngine implements AutoCloseable {
             return obj;
         }
         static JSONArray arr(double[] vals) {
-            JSONArray a = new JSONArray(); for(double v: vals) a.put(v); return a;
+            JSONArray a = new JSONArray(); for(double v: vals) { try { a.put(Double.isFinite(v) ? v : 0); } catch (Exception ignored) {} } return a;
         }
         public static Signature fromJson(JSONObject obj) {
             if (obj == null || !"native-geometry-pose-flow-v1".equals(obj.optString("method"))) return null;
