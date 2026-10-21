@@ -48,6 +48,8 @@ public final class MainActivity extends Activity {
     private EditText queryBox;
     private TextView status, stats, anchorsView;
     private GridView grid;
+    private FrameLayout webHost;
+    private boolean browserOpen;
     private SearchAdapter adapter;
     private GifStore store;
     private VisualEngine visual;
@@ -76,13 +78,13 @@ public final class MainActivity extends Activity {
             }
             @Override public void onStatus(String message){runOnUiThread(()->setStatus(message));}
         });
-        FrameLayout hidden=new FrameLayout(this);
-        hidden.setClipChildren(true);
-        hidden.setClipToPadding(true);
-        hidden.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(1)));
+        webHost=new FrameLayout(this);
+        webHost.setClipChildren(true);
+        webHost.setClipToPadding(true);
+        webHost.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(1)));
         search.webView.setAlpha(.01f);
-        hidden.addView(search.webView,new FrameLayout.LayoutParams(dp(420),dp(850)));
-        ((LinearLayout)grid.getParent()).addView(hidden);
+        webHost.addView(search.webView,new FrameLayout.LayoutParams(dp(420),dp(850)));
+        ((LinearLayout)grid.getParent()).addView(webHost);
         inference.execute(()->{
             visual=new VisualEngine(getApplicationContext());
             runOnUiThread(()->setStatus("Visual engine: OpenCV "+(visual.openCvReady?"READY":"fallback")
@@ -128,11 +130,13 @@ public final class MainActivity extends Activity {
         root.addView(status,margin(0,3,0,5));
 
         LinearLayout tools=new LinearLayout(this);tools.setOrientation(LinearLayout.HORIZONTAL);
-        Button diagnostic=button("DIAGNOSTIC"),clear=button("CLEAR ANCHORS");
+        Button diagnostic=button("DIAGNOSTIC"),clear=button("CLEAR"),browser=button("GOOGLE VIEW");
         diagnostic.setOnClickListener(v->diagnosticDialog());
         clear.setOnClickListener(v->{ targets.clear();negative.clear();updateStats();setStatus("Anchors cleared • page unchanged");});
+        browser.setOnClickListener(v->toggleBrowser());
         tools.addView(diagnostic,new LinearLayout.LayoutParams(0,dp(40),1));
         tools.addView(clear,new LinearLayout.LayoutParams(0,dp(40),1));
+        tools.addView(browser,new LinearLayout.LayoutParams(0,dp(40),1));
         root.addView(tools,margin(0,1,0,4));
 
         grid=new GridView(this);
@@ -165,6 +169,21 @@ public final class MainActivity extends Activity {
             +"  •  visual matches ready: "+candidateReady);
         adapter.notifyDataSetChanged();
     }
+    private void toggleBrowser() {
+        if(webHost==null || search==null)return;
+        browserOpen=!browserOpen;
+        grid.setVisibility(browserOpen?View.GONE:View.VISIBLE);
+        webHost.setLayoutParams(browserOpen
+            ? new LinearLayout.LayoutParams(-1,0,1)
+            : new LinearLayout.LayoutParams(-1,dp(1)));
+        search.webView.setAlpha(browserOpen?1f:.01f);
+        search.webView.setLayoutParams(browserOpen
+            ? new FrameLayout.LayoutParams(-1,-1)
+            : new FrameLayout.LayoutParams(dp(420),dp(850)));
+        if(browserOpen)setStatus("Google view • allow consent or scroll results • tap GOOGLE VIEW again to return");
+        else {search.scan();setStatus("Back to Yellow grid • refreshing extracted GIFs");}
+    }
+
     private void startSearch(boolean existing) {
         if(search==null)return;
         String q=(existing?currentQuery:queryBox.getText().toString()).trim();
