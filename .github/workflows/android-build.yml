@@ -1,0 +1,52 @@
+name: Android foundation build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK Platform 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Restore verified official Gradle wrapper
+        run: |
+          bash scripts/restore-gradle-wrapper.sh
+          if ! git ls-files --error-unmatch gradle/wrapper/gradle-wrapper.jar >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add gradle/wrapper/gradle-wrapper.jar
+            git commit -m "build: add verified Gradle 8.11.1 wrapper JAR"
+            git push || echo "Could not persist wrapper JAR; run the restore script locally if needed."
+          fi
+
+      - name: Assemble debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: xgrid-yellow-native-foundation-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
