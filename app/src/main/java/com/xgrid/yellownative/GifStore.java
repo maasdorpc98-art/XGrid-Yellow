@@ -51,6 +51,7 @@ public final class GifStore {
     private final ConcurrentHashMap<String,Long> thumbnailCooldown = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String,Object> thumbnailLocks = new ConcurrentHashMap<>();
     public volatile int thumbAttempts, thumbSuccess, thumbFailures, thumbDiskHits, thumbSkipped, thumbMemoryHits;
+    public volatile String lastThumbnailFailure="";
     public volatile long thumbNetworkMs;
     private final SharedPreferences signatures;
     private final LruCache<String,Bitmap> thumbnails = new LruCache<String,Bitmap>(48_000) {
@@ -126,6 +127,7 @@ public final class GifStore {
                 return bitmap;
             }catch(Exception ex){
                 thumbFailures++;
+                lastThumbnailFailure=ex.getClass().getSimpleName()+": "+String.valueOf(ex.getMessage());
                 // A bad URL should not monopolize all workers as cells recycle.
                 thumbnailCooldown.put(k,System.currentTimeMillis()+60_000L);
                 return null;

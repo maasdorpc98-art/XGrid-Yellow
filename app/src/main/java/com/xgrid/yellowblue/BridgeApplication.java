@@ -113,6 +113,10 @@ public final class BridgeApplication extends Browser implements Application.Acti
                 o.put("originalGifSuccess",originalGifSuccess);
                 o.put("previewGeometrySuccess",previewGeometrySuccess);
                 o.put("badUrls",badUrls);
+                o.put("previewRequests",store!=null?store.thumbAttempts:0);
+                o.put("previewSuccess",store!=null?store.thumbSuccess:0);
+                o.put("previewErrors",store!=null?store.thumbFailures:0);
+                o.put("previewLastError",store!=null?store.lastThumbnailFailure:"");
                 o.put("error",error+(v!=null?v.initError:""));
             }catch(Exception ignored){}
             return o.toString();
