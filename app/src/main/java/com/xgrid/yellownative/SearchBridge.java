@@ -45,7 +45,7 @@ public final class SearchBridge {
                 if(!url.contains("google.")) return;
                 int at=epoch;
                 listener.onStatus("Google page loaded • extracting GIF candidates");
-                for(int d:new int[]{600,2200,4300,7500})
+                for(int d:new int[]{350,1550,3400})
                     handler.postDelayed(()->{if(epoch==at)scan();},d);
             }
             @Override public void onReceivedError(WebView view,WebResourceRequest req,android.webkit.WebResourceError err){
@@ -67,6 +67,7 @@ public final class SearchBridge {
     }
     public void scan() {
         int at=epoch;
+        boolean fullScan=(pass++ == 0);
         // Avoid network JS injection. Inspect only the current Google result DOM.
         String js="(function(){"
           +"var o=[],seen={},imgs=document.querySelectorAll('img');"
@@ -86,9 +87,9 @@ public final class SearchBridge {
           +"var title=(el.alt||(a&&a.getAttribute('aria-label'))||'GIF result').slice(0,90);"
           +"var k=(g||t).split('#')[0];if(seen[k])continue;seen[k]=1;"
           +"o.push({thumb:t,gif:g,title:title})}"
-          +"var html=document.documentElement.innerHTML;var rx=/(https?:\\/\\/[^\\s\\\"'<>]{8,500}\\.gif(?:\\?[^\\s\\\"'<>]{0,150})?)/gi,m;"
+          +(fullScan?"var html=document.documentElement.innerHTML;var rx=/(https?:\\/\\/[^\\s\\\"'<>]{8,500}\\.gif(?:\\?[^\\s\\\"'<>]{0,150})?)/gi,m;"
           +"while(o.length<180&&(m=rx.exec(html))!==null){var g=dec(m[1]).replace(/\\\\u0026/g,'&');if(seen[g])continue;seen[g]=1;"
-          +"o.push({thumb:g,gif:g,title:'Original GIF link'});}"
+          +"o.push({thumb:g,gif:g,title:'Original GIF link'});}":"")
           +"return JSON.stringify({host:location.host,count:imgs.length,items:o})"
           +"})()";
         webView.evaluateJavascript(js,result->{

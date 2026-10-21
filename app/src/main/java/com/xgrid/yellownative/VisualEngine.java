@@ -112,6 +112,20 @@ public final class VisualEngine implements AutoCloseable {
             && bytes[5]=='a';
     }
 
+    /** Stage-one thumbnail-only geometry, inexpensive and deterministic. */
+    public Signature analyzeFast(Bitmap bitmap) {
+        Signature sig=new Signature();
+        if(bitmap==null)return sig;
+        Bitmap frame=Bitmap.createScaledBitmap(bitmap,SIZE,SIZE,true);
+        sig.geometry=geometry(frame);
+        sig.frames=1;
+        sig.uniqueFrames=1;
+        sig.gifVerified=false;
+        sig.motionValid=false;
+        if(frame!=bitmap)frame.recycle();
+        return sig;
+    }
+
     public Signature analyze(byte[] data, Bitmap fallback) {
         final Signature s=new Signature();
         List<Bitmap> frames=new ArrayList<>();

@@ -51,6 +51,7 @@ public final class MainActivity extends Activity {
     private FrameLayout webHost;
     private boolean browserOpen;
     private SearchAdapter adapter;
+    private boolean thumbRefreshPending;
     private GifStore store;
     private VisualEngine visual;
     private SearchBridge search;
@@ -243,15 +244,19 @@ public final class MainActivity extends Activity {
             VisualEngine.Signature old=store.remembered(item.gifUrl);
             if(old!=null&&old.frames>0){item.signature=old;item.verifiedGif=old.gifVerified;return;}
         }
+        // Fast candidate pass: no original-GIF download and no pose inference.
+        // Anchors retain rich original-GIF analysis when the source is reachable.
         byte[] bytes=null;
-        if(!item.gifUrl.isEmpty()){
+        if(anchor && !item.gifUrl.isEmpty()){
             try{bytes=store.loadGif(item.gifUrl);item.verifiedGif=true;}
             catch(Exception e){item.failure=e.getMessage();}
         }
-        Bitmap thumbnail=store.loadThumbnail(item.previewUrl);
+        Bitmap thumbnail=item.thumb!=null ? item.thumb : store.loadThumbnail(item.previewUrl);
         if(bytes==null && thumbnail==null)throw new Exception("GIF and thumbnail unavailable");
         if(visual==null)throw new Exception("Visual engine initializing");
-        synchronized(visual){item.signature=visual.analyze(bytes,thumbnail);}
+        synchronized(visual){
+            item.signature=anchor ? visual.analyze(bytes,thumbnail) : visual.analyzeFast(thumbnail);
+        }
         if(item.signature.frames==0)throw new Exception("No decodable frames");
         if(!item.signature.gifVerified)geometryFallbacks++;
         analyzed++;
@@ -366,35 +371,65 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private class SearchAdapter extends BaseAdapter {
+    private final class SearchAdapter extends BaseAdapter {
+        private final class Tile {
+            ImageView image;
+            TextView caption;
+            String boundKey;
+        }
         @Override public int getCount(){return cards.size();}
         @Override public Object getItem(int pos){return cards.get(pos);}
         @Override public long getItemId(int pos){return pos;}
         @Override public View getView(int pos, View reuse, ViewGroup parent){
             GifStore.Item item=cards.get(pos);
-            LinearLayout box=new LinearLayout(MainActivity.this);
-            box.setOrientation(LinearLayout.VERTICAL);box.setBackgroundColor(PANEL);
-            ImageView img=new ImageView(MainActivity.this);
-            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            box.addView(img,new LinearLayout.LayoutParams(-1,dp(118)));
+            final LinearLayout box;
+            final Tile tile;
+            if(reuse instanceof LinearLayout && reuse.getTag() instanceof Tile){
+                box=(LinearLayout)reuse;
+                tile=(Tile)box.getTag();
+            } else {
+                box=new LinearLayout(MainActivity.this);
+                box.setOrientation(LinearLayout.VERTICAL);
+                box.setBackgroundColor(PANEL);
+                tile=new Tile();
+                tile.image=new ImageView(MainActivity.this);
+                tile.image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                box.addView(tile.image,new LinearLayout.LayoutParams(-1,dp(118)));
+                tile.caption=text("",10,YELLOW,false);
+                tile.caption.setPadding(dp(4),dp(2),0,dp(2));
+                box.addView(tile.caption,new LinearLayout.LayoutParams(-1,dp(27)));
+                box.setTag(tile);
+            }
+            tile.boundKey=item.key;
             String flag=targets.containsKey(item.key)?"★ MORE ":(negative.containsKey(item.key)?"− LESS ":"");
             String type=item.verifiedGif?"GIF":(item.gifUrl.isEmpty()?"? GIF":"GIF link");
-            TextView caption=text(flag+type+(item.rank>0?String.format(Locale.ROOT,"  %.0f%%",item.rank*100):""),10,YELLOW,false);
-            caption.setPadding(dp(4),dp(2),0,dp(2));
-            box.addView(caption,new LinearLayout.LayoutParams(-1,dp(27)));
-            Bitmap cached=store.cachedThumbnail(item.previewUrl);
-            if(cached!=null)img.setImageBitmap(cached);
-            else {
-                img.setImageResource(android.R.drawable.ic_menu_gallery);
-                if(!item.loading) {
+            tile.caption.setText(flag+type+(item.rank>0?String.format(Locale.ROOT,"  %.0f%%",item.rank*100):""));
+            Bitmap cached=item.thumb!=null ? item.thumb : store.cachedThumbnail(item.previewUrl);
+            if(cached!=null){
+                tile.image.setImageBitmap(cached);
+                item.thumb=cached;
+            }else{
+                tile.image.setImageResource(android.R.drawable.ic_menu_gallery);
+                if(!item.loading && store.mayLoadThumbnail(item.previewUrl)){
                     item.loading=true;
-                    store.workers.submit(()->{
-                        Bitmap b=store.loadThumbnail(item.previewUrl);
-                        item.loading=false;
-                        if(b!=null){item.thumb=b;thumbReady++;runOnUiThread(()->{
-                            // Never attach the bitmap to a recycled grid cell.
-                            if(pos<cards.size()&&cards.get(pos)==item){img.setImageBitmap(b);}
-                        });}
+                    store.thumbWorkers.execute(()->{
+                        Bitmap loaded=store.loadThumbnail(item.previewUrl);
+                        runOnUiThread(()->{
+                            item.loading=false;
+                            if(loaded!=null){
+                                item.thumb=loaded;
+                                thumbReady++;
+                                if(item.key.equals(tile.boundKey))tile.image.setImageBitmap(loaded);
+                                // Rebind any cells that were recycled while their bitmap was loading.
+                                if(!thumbRefreshPending){
+                                    thumbRefreshPending=true;
+                                    ui.postDelayed(()->{
+                                        thumbRefreshPending=false;
+                                        adapter.notifyDataSetChanged();
+                                    },110);
+                                }
+                            }
+                        });
                     });
                 }
             }
@@ -404,7 +439,7 @@ public final class MainActivity extends Activity {
 
     private String diagnostics(){
         StringBuilder s=new StringBuilder();
-        s.append("XGrid Yellow Native v0.2.0 GIF-only diagnostic\n");
+        s.append("XGrid Yellow Native v0.2.1 Fast Grid diagnostic\n");
         s.append("Time: ").append(new java.util.Date()).append("\n");
         s.append("Search query: ").append(currentQuery).append("\n");
         s.append("Google host: ").append(googleHost).append("\n");
@@ -418,6 +453,12 @@ public final class MainActivity extends Activity {
           .append(store.gifSuccess).append(" / ").append(store.gifRejected).append(" / ").append(store.failures).append("\n");
         s.append("Media downloaded bytes / cache hits: ").append(store.bytesDownloaded)
           .append(" / ").append(store.cacheHits).append("\n");
+        s.append("Thumb attempts/success/fail/disk hits/cooldown skips: ")
+            .append(store.thumbAttempts).append(" / ").append(store.thumbSuccess)
+            .append(" / ").append(store.thumbFailures).append(" / ")
+            .append(store.thumbDiskHits).append(" / ").append(store.thumbSkipped).append("\\n");
+        s.append("Thumb cumulative network ms / memory hits: ")
+            .append(store.thumbNetworkMs).append(" / ").append(store.thumbMemoryHits).append("\\n");
         s.append("Grid thumbnails ready / GIF viewer loads: ").append(thumbReady).append(" / ").append(animatedLoaded).append("\n");
         s.append("Visual OpenCV / pose: ").append(visual!=null&&visual.openCvReady).append(" / ")
           .append(visual!=null&&visual.poseReady).append("\n");
