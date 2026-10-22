@@ -280,12 +280,12 @@ public final class VisualEngine implements AutoCloseable {
             for(int x=0;x<SIZE;x++){
                 int argb=pix[y*SIZE+x];
                 double lum=(.2126*Color.red(argb)+.7152*Color.green(argb)+.0722*Color.blue(argb))/255.0;
-                int bin=(y/8)*10+x/8;
-                f[bin]+=lum/64.0;
+                int bin=(y*10/SIZE)*10+(x*10/SIZE);
+                f[bin]+=lum/(SIZE*SIZE/100.0);
                 if(x>0) {
                     int o=pix[y*SIZE+x-1];
                     double ol=(.2126*Color.red(o)+.7152*Color.green(o)+.0722*Color.blue(o))/255.;
-                    f[100+bin]+=Math.abs(lum-ol)/64.0;
+                    f[100+bin]+=Math.abs(lum-ol)/(SIZE*SIZE/100.0);
                 }
             }
         }
@@ -296,7 +296,7 @@ public final class VisualEngine implements AutoCloseable {
         border/=Math.max(1,count);
         for(int y=0;y<SIZE;y++) for(int x=0;x<SIZE;x++){
             double delta=Math.min(1, Math.abs(gray(pix[y*SIZE+x])-border)*1.7);
-            f[200+(y/20)*4+(x/20)]+=delta/400.0;
+            f[200+(y*4/SIZE)*4+(x*4/SIZE)]+=delta/(SIZE*SIZE/16.0);
         }
         return f;
     }
@@ -330,7 +330,7 @@ public final class VisualEngine implements AutoCloseable {
             Imgproc.resize(gb,smallB,new Size(80,80));
             Video.calcOpticalFlowFarneback(smallA,smallB,flow,0.5,2,12,2,5,1.1,0);
             double[] vx=new double[100], vy=new double[100];int n=0;
-            for(int y=4;y<SIZE;y+=8) for(int x=4;x<SIZE;x+=8){
+            for(int y=4;y<80;y+=8) for(int x=4;x<80;x+=8){
                 double[] v=flow.get(y,x); if(v!=null){vx[n]=v[0];vy[n]=v[1];n++;}
             }
             if(n==0) return 0;
@@ -338,7 +338,7 @@ public final class VisualEngine implements AutoCloseable {
             double cx=vx[n/2], cy=vy[n/2];
             double magnitude=0;
             // Optical flow is camera-corrected by subtracting median global flow.
-            for(int y=4;y<SIZE;y+=8) for(int x=4;x<SIZE;x+=8){
+            for(int y=4;y<80;y+=8) for(int x=4;x<80;x+=8){
                 double[] v=flow.get(y,x); if(v!=null) magnitude+=Math.hypot(v[0]-cx,v[1]-cy);
             }
             return Math.min(1.0,magnitude/(n*8));
