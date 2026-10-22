@@ -34,8 +34,8 @@ import java.util.List;
  * contribute to Motion; still images cannot fabricate motion confidence.
  */
 public final class VisualEngine implements AutoCloseable {
-    public static final int SIZE = 80;
-    private static final int SAMPLES = 8;
+    public static final int SIZE = 160;
+    private static final int SAMPLES = 10;
     private PoseLandmarker pose;
     public final boolean openCvReady;
     public final boolean poseReady;
@@ -43,13 +43,17 @@ public final class VisualEngine implements AutoCloseable {
 
     public static final class Signature {
         public double[] geometry = new double[232];
-        public double[] motion = new double[8];
+        public double[] motion = new double[12];
         public boolean motionValid;
         public boolean gifVerified;
         public int uniqueFrames;
         public int poses;
         public int frames;
-        public String method = "native-geometry-pose-flow-v1";
+        public String method = "native-subject-pose-flow-v2";
+        public final List<SubjectGeometry.Subject> subjects=new ArrayList<>();
+        public final List<double[]> normalizedPoses=new ArrayList<>();
+        public int poseFrames=0;
+        public double subjectConfidence=0;
         public JSONObject json() {
             JSONObject obj = new JSONObject();
             try {
@@ -57,6 +61,13 @@ public final class VisualEngine implements AutoCloseable {
                 obj.put("motionValid", motionValid); obj.put("gifVerified", gifVerified);
                 obj.put("uniqueFrames", uniqueFrames); obj.put("poses", poses);
                 obj.put("frames", frames); obj.put("method", method);
+                obj.put("poseFrames",poseFrames);
+                obj.put("subjectConfidence",subjectConfidence);
+                JSONArray parts=new JSONArray(), posesOut=new JSONArray();
+                for(SubjectGeometry.Subject sub:subjects)parts.put(sub.json());
+                for(double[] ps:normalizedPoses)posesOut.put(arr(ps));
+                obj.put("subjects",parts);
+                obj.put("normalizedPoses",posesOut);
             } catch(Exception ignored) {}
             return obj;
         }
@@ -64,17 +75,38 @@ public final class VisualEngine implements AutoCloseable {
             JSONArray a = new JSONArray(); for(double v: vals) { try { a.put(Double.isFinite(v) ? v : 0); } catch (Exception ignored) {} } return a;
         }
         public static Signature fromJson(JSONObject obj) {
-            if (obj == null || !"native-geometry-pose-flow-v1".equals(obj.optString("method"))) return null;
+            if (obj == null || !"native-subject-pose-flow-v2".equals(obj.optString("method"))) return null;
             Signature s = new Signature();
             JSONArray g=obj.optJSONArray("geometry"), m=obj.optJSONArray("motion");
-            if(g==null || m==null || g.length()!=232 || m.length()!=8) return null;
+            if(g==null || m==null || g.length()!=232 || m.length()!=12) return null;
             for(int i=0;i<232;i++) s.geometry[i]=g.optDouble(i);
-            for(int i=0;i<8;i++) s.motion[i]=m.optDouble(i);
+            for(int i=0;i<12;i++) s.motion[i]=m.optDouble(i);
             s.motionValid=obj.optBoolean("motionValid");
             s.gifVerified=obj.optBoolean("gifVerified");
             s.uniqueFrames=obj.optInt("uniqueFrames");
             s.poses=obj.optInt("poses");
             s.frames=obj.optInt("frames");
+            s.poseFrames=obj.optInt("poseFrames");
+            s.subjectConfidence=obj.optDouble("subjectConfidence");
+            JSONArray ps=obj.optJSONArray("subjects");
+            if(ps!=null)for(int i=0;i<Math.min(9,ps.length());i++){
+                JSONObject v=ps.optJSONObject(i);
+                JSONArray f=v==null?null:v.optJSONArray("features");
+                if(f==null||f.length()!=70)continue;
+                SubjectGeometry.Subject sub=new SubjectGeometry.Subject();
+                for(int j=0;j<70;j++)sub.features[j]=f.optDouble(j);
+                sub.confidence=v.optDouble("confidence");
+                sub.source=v.optString("source");
+                s.subjects.add(sub);
+            }
+            JSONArray poses=obj.optJSONArray("normalizedPoses");
+            if(poses!=null)for(int i=0;i<Math.min(12,poses.length());i++){
+                JSONArray f=poses.optJSONArray(i);
+                if(f==null||f.length()!=16)continue;
+                double[] p=new double[16];
+                for(int j=0;j<16;j++)p[j]=f.optDouble(j);
+                s.normalizedPoses.add(p);
+            }
             return s;
         }
     }
@@ -96,7 +128,7 @@ public final class VisualEngine implements AutoCloseable {
         try {
             BaseOptions options=BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build();
             PoseLandmarker.PoseLandmarkerOptions config = PoseLandmarker.PoseLandmarkerOptions.builder()
-                    .setBaseOptions(options).setNumPoses(2)
+                    .setBaseOptions(options).setNumPoses(3)
                     .setRunningMode(RunningMode.IMAGE)
                     .setMinPoseDetectionConfidence(.5f)
                     .setMinPosePresenceConfidence(.5f)
@@ -118,6 +150,8 @@ public final class VisualEngine implements AutoCloseable {
         if(bitmap==null)return sig;
         Bitmap frame=Bitmap.createScaledBitmap(bitmap,SIZE,SIZE,true);
         sig.geometry=geometry(frame);
+        addSubjects(sig,frame);
+        addPoses(sig,frame);
         sig.frames=1;
         sig.uniqueFrames=1;
         sig.gifVerified=false;
@@ -163,14 +197,11 @@ public final class VisualEngine implements AutoCloseable {
         for(int i=0;i<frames.size();i++) {
             double[] a=geometry(frames.get(i));
             for(int j=0;j<s.geometry.length;j++) s.geometry[j]+=a[j]/frames.size();
-            if(poseReady && (i==0 || i==frames.size()/2)) {
-                try {
-                    PoseLandmarkerResult result=pose.detect(new BitmapImageBuilder(frames.get(i)).build());
-                    if(result.landmarks()!=null && !result.landmarks().isEmpty()){
-                        s.poses=Math.max(s.poses,result.landmarks().size());
-                        addPose(s.geometry, result.landmarks().get(0), 1.0/2.0);
-                    }
-                } catch(Throwable ignored){}
+            if(i==0 || i==frames.size()/2 || i==frames.size()-1) {
+                addSubjects(s,frames.get(i));
+            }
+            if(i==0 || i==frames.size()/3 || i==2*frames.size()/3 || i==frames.size()-1){
+                addPoses(s,frames.get(i));
             }
         }
         if(s.gifVerified && s.uniqueFrames>=2 && frames.size()>1) {
@@ -184,6 +215,50 @@ public final class VisualEngine implements AutoCloseable {
         }
         for(Bitmap b:frames) b.recycle();
         return s;
+    }
+
+
+    private void addPoses(Signature sig,Bitmap bitmap){
+        if(!poseReady||pose==null)return;
+        try {
+            PoseLandmarkerResult result=pose.detect(new BitmapImageBuilder(bitmap).build());
+            if(result.landmarks()==null)return;
+            sig.poseFrames++;
+            sig.poses=Math.max(sig.poses,result.landmarks().size());
+            for(List<NormalizedLandmark> human:result.landmarks()){
+                if(human.size()<29)continue;
+                double[] v=normalizedPose(human);
+                if(v!=null && sig.normalizedPoses.size()<12)sig.normalizedPoses.add(v);
+            }
+        }catch(Throwable ignored){}
+    }
+    private static double[] normalizedPose(List<NormalizedLandmark> pose){
+        int[] joints={11,12,23,24,25,26,27,28};
+        double xmin=1,ymin=1,xmax=0,ymax=0;
+        for(int k:joints){
+            if(pose.size()<=k)return null;
+            NormalizedLandmark p=pose.get(k);
+            if(!Float.isFinite(p.x())||!Float.isFinite(p.y()))return null;
+            xmin=Math.min(xmin,p.x());xmax=Math.max(xmax,p.x());
+            ymin=Math.min(ymin,p.y());ymax=Math.max(ymax,p.y());
+        }
+        double scale=Math.max(.10,Math.max(xmax-xmin,ymax-ymin));
+        double cx=(xmin+xmax)/2.,cy=(ymin+ymax)/2.;
+        double[] out=new double[16];
+        for(int i=0;i<joints.length;i++){
+            NormalizedLandmark p=pose.get(joints[i]);
+            out[2*i]=Math.max(-1,Math.min(1,(p.x()-cx)/scale));
+            out[2*i+1]=Math.max(-1,Math.min(1,(p.y()-cy)/scale));
+        }
+        return out;
+    }
+    private static void addSubjects(Signature sig,Bitmap bitmap){
+        if(sig.subjects.size()>=9)return;
+        for(SubjectGeometry.Subject part:SubjectGeometry.analyze(bitmap)){
+            if(sig.subjects.size()>=9)break;
+            sig.subjects.add(part);
+            sig.subjectConfidence=Math.max(sig.subjectConfidence,part.confidence);
+        }
     }
 
     private static long frameHash(Bitmap b){
@@ -245,12 +320,15 @@ public final class VisualEngine implements AutoCloseable {
             for(int i=0;i<p.length;i+=4) diff+=Math.abs(gray(p[i])-gray(q[i]));
             return diff/(p.length/4);
         }
-        Mat first=new Mat(),second=new Mat(),ga=new Mat(),gb=new Mat(),flow=new Mat();
+        Mat first=new Mat(),second=new Mat(),ga=new Mat(),gb=new Mat(),flow=new Mat(),
+            smallA=new Mat(),smallB=new Mat();
         try {
             Utils.bitmapToMat(a,first); Utils.bitmapToMat(b,second);
             Imgproc.cvtColor(first,ga,Imgproc.COLOR_RGBA2GRAY);
             Imgproc.cvtColor(second,gb,Imgproc.COLOR_RGBA2GRAY);
-            Video.calcOpticalFlowFarneback(ga,gb,flow,0.5,2,12,2,5,1.1,0);
+            Imgproc.resize(ga,smallA,new Size(80,80));
+            Imgproc.resize(gb,smallB,new Size(80,80));
+            Video.calcOpticalFlowFarneback(smallA,smallB,flow,0.5,2,12,2,5,1.1,0);
             double[] vx=new double[100], vy=new double[100];int n=0;
             for(int y=4;y<SIZE;y+=8) for(int x=4;x<SIZE;x+=8){
                 double[] v=flow.get(y,x); if(v!=null){vx[n]=v[0];vy[n]=v[1];n++;}
@@ -265,7 +343,7 @@ public final class VisualEngine implements AutoCloseable {
             }
             return Math.min(1.0,magnitude/(n*8));
         } catch(Throwable ignored){return 0;}
-        finally {first.release();second.release();ga.release();gb.release();flow.release();}
+        finally {first.release();second.release();ga.release();gb.release();flow.release();smallA.release();smallB.release();}
     }
 
     public static Similarity match(Signature a,Signature b){
@@ -282,8 +360,8 @@ public final class VisualEngine implements AutoCloseable {
         double geom=Math.exp(-3*Math.sqrt(d/200));
         boolean motion=a.motionValid && b.motionValid;
         double md=0;
-        for(int i=0;i<8;i++){double x=a.motion[i]-b.motion[i];md+=x*x;}
-        double mot=Math.exp(-4*Math.sqrt(md/8));
+        for(int i=0;i<12;i++){double x=a.motion[i]-b.motion[i];md+=x*x;}
+        double mot=Math.exp(-4*Math.sqrt(md/12));
         return new Similarity(geom,mot,motion);
     }
 
