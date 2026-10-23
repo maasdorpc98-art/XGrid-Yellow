@@ -22,6 +22,7 @@ import org.json.JSONObject;
 import java.net.URI;
 import java.util.Collections;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,6 +40,8 @@ public final class BridgeApplication extends Browser implements Application.Acti
     private final Set<WebView> attached = Collections.newSetFromMap(new WeakHashMap<WebView, Boolean>());
     private final ExecutorService jobs = Executors.newFixedThreadPool(2);
     private final AtomicInteger inflight = new AtomicInteger();
+    private final Set<String> cancelledTokens = ConcurrentHashMap.newKeySet();
+    private final AtomicInteger cancelledNativeJobs = new AtomicInteger();
     private volatile VisualEngine engine;
     private volatile GifStore store;
     private volatile String error = "";
@@ -109,6 +112,7 @@ public final class BridgeApplication extends Browser implements Application.Acti
                 o.put("failures",failed);
                 o.put("rejected",rejected);
                 o.put("inflight",inflight.get());
+                o.put("cancelledNativeJobs",cancelledNativeJobs.get());
                 o.put("analysisMs",totalAnalysisMs);
                 o.put("originalGifSuccess",originalGifSuccess);
                 o.put("previewGeometrySuccess",previewGeometrySuccess);
@@ -143,6 +147,13 @@ public final class BridgeApplication extends Browser implements Application.Acti
             return true;
         }
 
+        /** Cooperative cancellation for abandoned search transactions. */
+        @JavascriptInterface public boolean cancelAnalysis(String token) {
+            if(token==null||token.length()<2||token.length()>96)return false;
+            cancelledTokens.add(token);
+            return true;
+        }
+
         /** Backwards-compatible native hook for earlier XSearch scripts. */
         @JavascriptInterface public boolean analyzeGif(String url, String token) {
             return analyzeVisual(url,url,token);
@@ -174,6 +185,7 @@ public final class BridgeApplication extends Browser implements Application.Acti
             try {
                 output.put("token",token);
                 output.put("url",gifUrl.isEmpty()?previewUrl:gifUrl);
+                if(cancelledTokens.contains(token))return;
                 VisualEngine local=engine;
                 if(local==null)throw new IllegalStateException("Native visual engine starting");
                 VisualEngine.Signature signature=null;
@@ -206,6 +218,7 @@ public final class BridgeApplication extends Browser implements Application.Acti
                     if(signature.frames<1)throw new IllegalStateException("Preview geometry unavailable");
                     previewGeometrySuccess++;
                 }
+                if(cancelledTokens.contains(token))return;
                 output.put("ok",true);
                 output.put("signature",signature.json());
                 output.put("mode",method);
@@ -220,10 +233,11 @@ public final class BridgeApplication extends Browser implements Application.Acti
             }finally {
                 totalAnalysisMs+=SystemClock.elapsedRealtime()-start;
                 inflight.decrementAndGet();
+                if(cancelledTokens.remove(token))cancelledNativeJobs.incrementAndGet();
             }
             final String payload=output.toString();
             main.post(()->{
-                try { web.evaluateJavascript("window.dispatchEvent(new CustomEvent('__xgridNativeAnalysis',{detail:"+payload+"}));",null); }
+                try { if(cancelledTokens.remove(token)){cancelledNativeJobs.incrementAndGet();return;} web.evaluateJavascript("window.dispatchEvent(new CustomEvent('__xgridNativeAnalysis',{detail:"+payload+"}));",null); }
                 catch(Throwable t){error="callback: "+t.getClass().getSimpleName();}
             });
         }
