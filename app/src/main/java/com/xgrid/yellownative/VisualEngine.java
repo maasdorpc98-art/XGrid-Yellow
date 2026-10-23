@@ -103,6 +103,11 @@ public final class VisualEngine implements AutoCloseable {
                 for(int j=0;j<70;j++)sub.features[j]=f.optDouble(j);
                 sub.confidence=v.optDouble("confidence");
                 sub.source=v.optString("source");
+                JSONArray bounds=v.optJSONArray("bbox");
+                if(bounds!=null && bounds.length()==4){
+                    sub.left=bounds.optDouble(0);sub.top=bounds.optDouble(1);
+                    sub.right=bounds.optDouble(2);sub.bottom=bounds.optDouble(3);
+                }
                 s.subjects.add(sub);
             }
             JSONArray poses=obj.optJSONArray("normalizedPoses");
