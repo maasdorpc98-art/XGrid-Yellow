@@ -44,12 +44,14 @@ public final class VisualEngine implements AutoCloseable {
     public static final class Signature {
         public double[] geometry = new double[232];
         public double[] motion = new double[12];
+        public double[] motionTrace = new double[36];
+        public int motionFrames=0;
         public boolean motionValid;
         public boolean gifVerified;
         public int uniqueFrames;
         public int poses;
         public int frames;
-        public String method = "native-subject-pose-flow-v2";
+        public String method = "native-subject-pose-flow-v3";
         public final List<SubjectGeometry.Subject> subjects=new ArrayList<>();
         public final List<double[]> normalizedPoses=new ArrayList<>();
         public int poseFrames=0;
@@ -58,6 +60,7 @@ public final class VisualEngine implements AutoCloseable {
             JSONObject obj = new JSONObject();
             try {
                 obj.put("geometry", arr(geometry)); obj.put("motion", arr(motion));
+                obj.put("motionTrace",arr(motionTrace)); obj.put("motionFrames",motionFrames);
                 obj.put("motionValid", motionValid); obj.put("gifVerified", gifVerified);
                 obj.put("uniqueFrames", uniqueFrames); obj.put("poses", poses);
                 obj.put("frames", frames); obj.put("method", method);
@@ -75,7 +78,7 @@ public final class VisualEngine implements AutoCloseable {
             JSONArray a = new JSONArray(); for(double v: vals) { try { a.put(Double.isFinite(v) ? v : 0); } catch (Exception ignored) {} } return a;
         }
         public static Signature fromJson(JSONObject obj) {
-            if (obj == null || !"native-subject-pose-flow-v2".equals(obj.optString("method"))) return null;
+            if (obj == null || !"native-subject-pose-flow-v3".equals(obj.optString("method"))) return null;
             Signature s = new Signature();
             JSONArray g=obj.optJSONArray("geometry"), m=obj.optJSONArray("motion");
             if(g==null || m==null || g.length()!=232 || m.length()!=12) return null;
@@ -86,6 +89,9 @@ public final class VisualEngine implements AutoCloseable {
             s.uniqueFrames=obj.optInt("uniqueFrames");
             s.poses=obj.optInt("poses");
             s.frames=obj.optInt("frames");
+            JSONArray trace=obj.optJSONArray("motionTrace");
+            if(trace!=null && trace.length()==36){for(int i=0;i<36;i++)s.motionTrace[i]=trace.optDouble(i);}
+            s.motionFrames=Math.max(0,Math.min(9,obj.optInt("motionFrames")));
             s.poseFrames=obj.optInt("poseFrames");
             s.subjectConfidence=obj.optDouble("subjectConfidence");
             JSONArray ps=obj.optJSONArray("subjects");
@@ -207,8 +213,12 @@ public final class VisualEngine implements AutoCloseable {
         if(s.gifVerified && s.uniqueFrames>=2 && frames.size()>1) {
             int n=0;double total=0;
             for(int i=1;i<frames.size();i++){
-                double v = motion(frames.get(i-1),frames.get(i));
-                s.motion[i]=v; total+=v; n++;
+                double[] v = motionStats(frames.get(i-1),frames.get(i));
+                s.motion[i]=v[0]; total+=v[0]; n++;
+                if((i-1)*4+3<s.motionTrace.length){
+                    System.arraycopy(v,0,s.motionTrace,(i-1)*4,4);
+                    s.motionFrames++;
+                }
             }
             s.motion[0] = total/Math.max(1,n);
             s.motionValid=total > .02;  // genuine measurable motion after correction
@@ -312,13 +322,13 @@ public final class VisualEngine implements AutoCloseable {
         }
     }
 
-    private double motion(Bitmap a,Bitmap b) {
+    private double[] motionStats(Bitmap a,Bitmap b) {
         if(!openCvReady) {
             int[] p=new int[SIZE*SIZE],q=new int[SIZE*SIZE];
             a.getPixels(p,0,SIZE,0,0,SIZE,SIZE); b.getPixels(q,0,SIZE,0,0,SIZE,SIZE);
             double diff=0;
             for(int i=0;i<p.length;i+=4) diff+=Math.abs(gray(p[i])-gray(q[i]));
-            return diff/(p.length/4);
+            return new double[]{diff/(p.length/4),0,0,0};
         }
         Mat first=new Mat(),second=new Mat(),ga=new Mat(),gb=new Mat(),flow=new Mat(),
             smallA=new Mat(),smallB=new Mat();
@@ -333,16 +343,27 @@ public final class VisualEngine implements AutoCloseable {
             for(int y=4;y<80;y+=8) for(int x=4;x<80;x+=8){
                 double[] v=flow.get(y,x); if(v!=null){vx[n]=v[0];vy[n]=v[1];n++;}
             }
-            if(n==0) return 0;
+            if(n==0) return new double[]{0,0,0,0};
             Arrays.sort(vx,0,n); Arrays.sort(vy,0,n);
             double cx=vx[n/2], cy=vy[n/2];
-            double magnitude=0;
-            // Optical flow is camera-corrected by subtracting median global flow.
+            double magnitude=0,dirX=0,dirY=0,active=0;
+            // Camera correction: remove the spatial median of global flow.
+            // Direction uses foreground-weighted residual flow, not raw camera pan.
             for(int y=4;y<80;y+=8) for(int x=4;x<80;x+=8){
-                double[] v=flow.get(y,x); if(v!=null) magnitude+=Math.hypot(v[0]-cx,v[1]-cy);
+                double[] v=flow.get(y,x);
+                if(v==null)continue;
+                double rx=v[0]-cx,ry=v[1]-cy,mag=Math.hypot(rx,ry);
+                magnitude+=mag;
+                if(mag>.18){
+                    double w=Math.min(4,mag);
+                    dirX+=rx*w;dirY+=ry*w;active++;
+                }
             }
-            return Math.min(1.0,magnitude/(n*8));
-        } catch(Throwable ignored){return 0;}
+            double speed=Math.min(1.0,magnitude/(n*8));
+            double vector=Math.hypot(dirX,dirY);
+            double dx=vector>.01?dirX/vector:0,dy=vector>.01?dirY/vector:0;
+            return new double[]{speed,dx,dy,Math.min(1,active/n)};
+        } catch(Throwable ignored){return new double[]{0,0,0,0};}
         finally {first.release();second.release();ga.release();gb.release();flow.release();smallA.release();smallB.release();}
     }
 
