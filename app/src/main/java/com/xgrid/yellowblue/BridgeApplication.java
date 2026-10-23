@@ -134,7 +134,7 @@ public final class BridgeApplication extends Browser implements Application.Acti
             if(inflight.incrementAndGet()>3){inflight.decrementAndGet();return false;}
             main.post(() -> {
                 String page=host.getUrl();
-                if(page==null || !page.matches("(?i)^https://(?:www\\\\.)?google\\\\.[^/]+/(?:search|imgres).*")){
+                if(page==null || !page.matches("(?i)^https://(?:www\\.)?google\\.[^/]+/(?:search|imgres).*")){
                     inflight.decrementAndGet();rejected++;
                     return;
                 }
@@ -161,7 +161,7 @@ public final class BridgeApplication extends Browser implements Application.Acti
                     name.startsWith("127.") || name.startsWith("10.") ||
                     name.startsWith("192.168.") || name.startsWith("169.254.") ||
                     name.equals("::1") || name.startsWith("[") ||
-                    name.matches("^172\\\\.(?:1[6-9]|2[0-9]|3[01])\\\\..*") ||
+                    name.matches("^172\\.(?:1[6-9]|2[0-9]|3[01])\\..*") ||
                     name.matches("^[0-9.]+$"))return false;
                 int port=uri.getPort(); if(port!=-1 && port!=443)return false;
                 return true;
@@ -179,7 +179,7 @@ public final class BridgeApplication extends Browser implements Application.Acti
                 VisualEngine.Signature signature=null;
                 String method="preview-geometry";
                 String originalError="";
-                if(!gifUrl.isEmpty() && gifUrl.matches("(?i)^https://.*\\\\.gif(?:[?#].*)?$")) {
+                if(!gifUrl.isEmpty() && gifUrl.matches("(?i)^https://.*\\.gif(?:[?#].*)?$")) {
                     try {
                         signature=store.remembered(gifUrl);
                         if(signature==null || !signature.gifVerified){
