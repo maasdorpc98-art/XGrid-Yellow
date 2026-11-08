@@ -1,19 +1,12 @@
+# Security and generated build output
 .gradle/
-.idea/
-*.iml
-local.properties
 **/build/
-.cxx/
-.externalNativeBuild/
-captures/
+local.properties
 *.jks
 *.keystore
-*.p12
-*.pem
-*.key
-*.pass
-*.log
-.DS_Store
-
-# Downloaded only at build time; binary model not committed
-app/src/main/assets/*.task
+*.apk
+*.aab
+signing/keystore.properties
+signing/release.jks
+.env
+.env.*
